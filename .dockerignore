@@ -1,0 +1,15 @@
+target/
+out/
+cache/
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-shm
+*.db-wal
+.git/
+.claude/
+repomix-output.xml
+samples/
+docs/
