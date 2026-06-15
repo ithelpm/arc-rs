@@ -8,8 +8,11 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /build
 
-# Increase rustc stack size to prevent SIGSEGV during ThinLTO (aws-lc-rs / reqwest)
-ENV RUST_MIN_STACK=16777216
+# Prevent rustc SIGSEGV/ICE on constrained build servers:
+# - RUST_MIN_STACK: 32 MB per thread (compiler recommends this in the crash output)
+# - CARGO_BUILD_JOBS: cap parallelism to reduce peak memory usage
+ENV RUST_MIN_STACK=33554432 \
+    CARGO_BUILD_JOBS=2
 
 # Copy workspace manifests first for layer caching
 COPY Cargo.toml Cargo.lock ./
