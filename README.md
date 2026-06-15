@@ -9,15 +9,16 @@ arc-x402/          — core library: EIP-712 signing, x402 protocol, Circle Gate
                      axum middleware included (feature = "axum-middleware", on by default)
 crates/
   media-access/    — alloy 2.x bindings for MediaAccess.sol (on-chain access registry)
+  jellyfin-proxy/  — full application: x402-gated Jellyfin reverse proxy
+                     (multi-module: config, access, streaming, proxy, main)
 contracts/
   MediaAccess.sol  — Soulbound access registry deployed on Arc testnet
   script/
     Deploy.s.sol   — Forge deployment script
-examples/
+examples/          — single-file CLI demos that call arc-x402 library functions
   seller/          — demo axum server with four protected endpoints
   buyer/           — CLI payment agent (pay / buy / stream subcommands)
   generate-keys/   — EOA keypair generator
-  jellyfin-proxy/  — x402-gated reverse proxy for Jellyfin media servers
 ```
 
 ## arc-x402 library
