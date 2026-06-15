@@ -8,6 +8,38 @@ use anyhow::Context;
 use media_access::MediaAccessClient;
 use sqlx::SqlitePool;
 
+// ─── Public data types ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct ItemRow {
+    pub item_id: String,
+    pub seller: String,
+    pub title: String,
+    pub description: String,
+    pub buy_price_atomic: i64,
+    pub chunk_price_atomic: i64,
+    pub created_at: i64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ItemStats {
+    pub item_id: String,
+    pub title: String,
+    pub payments: i64,
+    pub volume_atomic: i64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct Stats {
+    pub total_payments: i64,
+    pub total_volume_atomic: i64,
+    pub unique_buyers: i64,
+    pub unique_sellers: i64,
+    pub items: Vec<ItemStats>,
+}
+
+// ─── AccessManager ────────────────────────────────────────────────────────────
+
 /// Manages on-chain access grants with a local SQLite cache.
 ///
 /// The cache avoids hitting the chain on every request; the chain remains the
@@ -54,6 +86,35 @@ impl AccessManager {
                 rate_per_sec_atomic INTEGER NOT NULL,
                 chunk_duration_secs INTEGER NOT NULL,
                 created_at          INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS items (
+                item_id            TEXT PRIMARY KEY,
+                seller             TEXT NOT NULL,
+                title              TEXT NOT NULL,
+                description        TEXT NOT NULL DEFAULT '',
+                buy_price_atomic   INTEGER NOT NULL,
+                chunk_price_atomic INTEGER NOT NULL,
+                created_at         INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS payments (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id         TEXT NOT NULL,
+                seller          TEXT NOT NULL,
+                buyer           TEXT NOT NULL,
+                amount_atomic   INTEGER NOT NULL,
+                mode            TEXT NOT NULL,
+                gateway_ref     TEXT,
+                settled_at      INTEGER NOT NULL
             )",
         )
         .execute(&pool)
@@ -145,7 +206,139 @@ impl AccessManager {
         .await?;
         Ok(())
     }
+
+    // ─── Item catalog (DB-backed) ─────────────────────────────────────────────
+
+    pub async fn get_items(&self) -> anyhow::Result<Vec<ItemRow>> {
+        Ok(sqlx::query_as::<_, ItemRow>(
+            "SELECT * FROM items ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    pub async fn get_item(&self, item_id: &str) -> anyhow::Result<Option<ItemRow>> {
+        Ok(sqlx::query_as::<_, ItemRow>(
+            "SELECT * FROM items WHERE item_id = ?",
+        )
+        .bind(item_id)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
+    pub async fn upsert_item(&self, item: &ItemRow) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT OR REPLACE INTO items \
+             (item_id, seller, title, description, buy_price_atomic, chunk_price_atomic, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&item.item_id)
+        .bind(&item.seller)
+        .bind(&item.title)
+        .bind(&item.description)
+        .bind(item.buy_price_atomic)
+        .bind(item.chunk_price_atomic)
+        .bind(item.created_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    // ─── Payment log ──────────────────────────────────────────────────────────
+
+    pub async fn log_payment(
+        &self,
+        item_id: &str,
+        seller: &str,
+        buyer: &str,
+        amount_atomic: i64,
+        mode: &str,
+        gateway_ref: Option<&str>,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO payments \
+             (item_id, seller, buyer, amount_atomic, mode, gateway_ref, settled_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(item_id)
+        .bind(seller)
+        .bind(buyer)
+        .bind(amount_atomic)
+        .bind(mode)
+        .bind(gateway_ref)
+        .bind(now_unix() as i64)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_stats(&self) -> anyhow::Result<Stats> {
+        let total_payments: i64 = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM payments")
+            .fetch_one(&self.pool)
+            .await
+            .map(|(c,)| c)
+            .unwrap_or(0);
+
+        let total_volume_atomic: i64 =
+            sqlx::query_as::<_, (Option<i64>,)>("SELECT SUM(amount_atomic) FROM payments")
+                .fetch_one(&self.pool)
+                .await
+                .map(|(s,)| s.unwrap_or(0))
+                .unwrap_or(0);
+
+        let unique_buyers: i64 =
+            sqlx::query_as::<_, (i64,)>("SELECT COUNT(DISTINCT buyer) FROM payments")
+                .fetch_one(&self.pool)
+                .await
+                .map(|(c,)| c)
+                .unwrap_or(0);
+
+        let unique_sellers: i64 =
+            sqlx::query_as::<_, (i64,)>("SELECT COUNT(DISTINCT seller) FROM payments")
+                .fetch_one(&self.pool)
+                .await
+                .map(|(c,)| c)
+                .unwrap_or(0);
+
+        #[derive(sqlx::FromRow)]
+        struct ItemStatsRow {
+            item_id: String,
+            title: String,
+            payments: i64,
+            volume_atomic: i64,
+        }
+
+        let item_rows = sqlx::query_as::<_, ItemStatsRow>(
+            "SELECT p.item_id, COALESCE(i.title, p.item_id) as title, \
+             COUNT(*) as payments, SUM(p.amount_atomic) as volume_atomic \
+             FROM payments p LEFT JOIN items i ON p.item_id = i.item_id \
+             GROUP BY p.item_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+
+        let items = item_rows
+            .into_iter()
+            .map(|r| ItemStats {
+                item_id: r.item_id,
+                title: r.title,
+                payments: r.payments,
+                volume_atomic: r.volume_atomic,
+            })
+            .collect();
+
+        Ok(Stats {
+            total_payments,
+            total_volume_atomic,
+            unique_buyers,
+            unique_sellers,
+            items,
+        })
+    }
 }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 fn b256_to_hex(b: B256) -> String {
     format!("0x{}", hex::encode(b.as_slice()))

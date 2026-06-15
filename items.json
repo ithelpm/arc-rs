@@ -2,18 +2,18 @@
   "demo-episode-1": {
     "title": "Demo Episode 1 — Introduction to Arc",
     "description": "A beginner-friendly overview of the Arc Layer-1 blockchain and x402 nanopayments.",
-    "buy_price_atomic": 1000000,
-    "chunk_price_atomic": 500
+    "buy_price_atomic": 10000,
+    "chunk_price_atomic": 5
   },
   "demo-episode-2": {
     "title": "Demo Episode 2 — Building with Circle Gateway",
     "description": "Deep dive into Circle Gateway batch settlement and EIP-3009 authorization flows.",
-    "buy_price_atomic": 2000000,
-    "chunk_price_atomic": 1000
+    "buy_price_atomic": 20000,
+    "chunk_price_atomic": 10
   },
   "premium-report": {
     "title": "Premium Research Report",
     "description": "Exclusive analysis of stablecoin payment rails and nanopayment economics.",
-    "buy_price_atomic": 5000000
+    "buy_price_atomic": 50000
   }
 }
