@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "arc-x402",
+    "examples/seller",
+    "examples/buyer",
+    "examples/generate-keys",
+    "crates/*",
+]
+resolver = "2"
