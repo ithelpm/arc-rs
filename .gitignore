@@ -1,6 +1,7 @@
 refer/
 .env.local
 .env
+CLAUDE.md
 
 # Cargo build artefacts
 /target
@@ -8,6 +9,9 @@ refer/
 # Forge build artefacts
 /out
 /cache
+
+# Forge dependencies (managed as git submodules via foundry.toml)
+/lib
 
 # Claude Code internal state
 /.claude
