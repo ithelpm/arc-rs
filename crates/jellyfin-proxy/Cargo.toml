@@ -1,0 +1,53 @@
+[package]
+name = "jellyfin-proxy"
+version = "0.1.0"
+edition = "2021"
+description = "x402-gated Jellyfin reverse proxy with per-second streaming billing"
+
+[[bin]]
+name = "jellyfin-proxy"
+path = "src/main.rs"
+
+[dependencies]
+# Core payment library
+arc-x402 = { path = "../../arc-x402" }
+# On-chain access control
+media-access = { path = "../media-access" }
+# alloy primitives (Address, B256, TxHash) — same version as media-access
+alloy-primitives = "1.6.0"
+
+# HTTP server
+axum = "0.8.9"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace"] }
+
+# HTTP client (for proxying to Jellyfin and calling Gateway API)
+reqwest = { version = "0.13.4", default-features = false, features = [
+    "json",
+    "rustls",
+    "stream",
+] }
+
+# Database (SQLite access cache)
+sqlx = { version = "0.9.0", features = ["sqlite", "runtime-tokio", "tls-none"] }
+
+# Concurrent session map
+dashmap = "6"
+uuid = { version = "1", features = ["v4"] }
+
+# Streaming utilities
+tokio-stream = "0.1"
+futures = "0.3"
+bytes = "1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Utilities
+hex = "0.4"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
