@@ -25,13 +25,6 @@ axum = { version = "0.8.9", optional = true }
 tower = { version = "0.5.3", optional = true }
 http = { version = "1", optional = true }
 
-# Database (default off, SeaORM)
-sea-orm = { version = "1", features = [
-    "runtime-tokio-rustls",
-], optional = true }
-
 [features]
 default = ["axum-middleware"]
 axum-middleware = ["dep:axum", "dep:tower", "dep:http"]
-db = ["dep:sea-orm"]
-supabase = ["db"]
