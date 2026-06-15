@@ -27,7 +27,6 @@ http = { version = "1", optional = true }
 
 # Database (default off, SeaORM)
 sea-orm = { version = "1", features = [
-    "sqlx-postgres",
     "runtime-tokio-rustls",
 ], optional = true }
 
