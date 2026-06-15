@@ -6,6 +6,14 @@ services:
     volumes:
       - ./data:/app/data
       - ./items.json:/app/items.json:ro
-    env_file:
-      - .env
+    environment:
+      - SELLER_ADDRESS=${SELLER_ADDRESS}
+      - SELLER_PRIVATE_KEY=${SELLER_PRIVATE_KEY}
+      - MEDIA_ACCESS_CONTRACT=${MEDIA_ACCESS_CONTRACT}
+      - ARC_RPC_URL=${ARC_RPC_URL:-https://rpc.testnet.arc.network}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///app/data/access.db}
+      - PORT=${PORT:-3001}
+      - CHUNK_PRICE_ATOMIC=${CHUNK_PRICE_ATOMIC:-1000}
+      - BUY_PRICE_ATOMIC=${BUY_PRICE_ATOMIC:-5000000}
+      - ITEMS_JSON_PATH=${ITEMS_JSON_PATH:-/app/items.json}
     restart: unless-stopped
