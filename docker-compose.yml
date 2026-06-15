@@ -1,0 +1,11 @@
+services:
+  access-gated-server:
+    image: ghcr.io/ithelpm/arc-rs:latest
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./data:/app/data
+      - ./items.json:/app/items.json:ro
+    env_file:
+      - .env
+    restart: unless-stopped
