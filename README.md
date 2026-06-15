@@ -8,7 +8,6 @@ Rust implementation of the [x402 HTTP payment protocol](https://x402.org) for th
 arc-x402/          — core library: EIP-712 signing, x402 protocol, Circle Gateway client
                      axum middleware included (feature = "axum-middleware", on by default)
 crates/
-  jellyfin-proxy/  — example: x402-gated reverse proxy for Jellyfin media servers
   media-access/    — alloy 2.x bindings for MediaAccess.sol (on-chain access registry)
 contracts/
   MediaAccess.sol  — Soulbound access registry deployed on Arc testnet
@@ -18,6 +17,7 @@ examples/
   seller/          — demo axum server with four protected endpoints
   buyer/           — CLI payment agent (pay / buy / stream subcommands)
   generate-keys/   — EOA keypair generator
+  jellyfin-proxy/  — x402-gated reverse proxy for Jellyfin media servers
 ```
 
 ## arc-x402 library

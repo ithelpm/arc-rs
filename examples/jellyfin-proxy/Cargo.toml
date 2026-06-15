@@ -12,7 +12,7 @@ path = "src/main.rs"
 # Core payment library
 arc-x402 = { path = "../../arc-x402" }
 # On-chain access control
-media-access = { path = "../media-access" }
+media-access = { path = "../../crates/media-access" }
 # alloy primitives (Address, B256, TxHash) — same version as media-access
 alloy-primitives = "1.6.0"
 

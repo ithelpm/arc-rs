@@ -1,9 +1,10 @@
 [workspace]
 members = [
     "arc-x402",
+    "crates/media-access",
     "examples/seller",
     "examples/buyer",
     "examples/generate-keys",
-    "crates/*",
+    "examples/jellyfin-proxy",
 ]
 resolver = "2"
