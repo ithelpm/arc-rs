@@ -1,0 +1,18 @@
+[package]
+name = "seller"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "seller"
+path = "src/main.rs"
+
+[dependencies]
+arc-x402 = { path = "../../arc-x402", features = ["axum-middleware"] }
+axum = "0.8.9"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+tower-http = { version = "0.6.11", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"

@@ -1,0 +1,15 @@
+[package]
+name = "generate-keys"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "generate-keys"
+path = "src/main.rs"
+
+[dependencies]
+arc-x402 = { path = "../../arc-x402" }
+k256 = { version = "0.13", features = ["ecdsa"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+hex = "0.4"
+tiny-keccak = { version = "2", features = ["keccak"] }
