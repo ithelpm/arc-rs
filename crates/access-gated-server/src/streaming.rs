@@ -7,8 +7,6 @@ use arc_x402::{server::build_chunk_requirements, types::PaymentRequirements};
 use dashmap::DashMap;
 use uuid::Uuid;
 
-use crate::config::Config;
-
 /// Active per-chunk billing session.
 #[allow(dead_code)]
 pub struct StreamingSession {
@@ -40,18 +38,21 @@ impl StreamingManager {
     }
 
     /// Creates a new session and returns the session ID.
+    ///
+    /// `chunk_price_atomic` is resolved by the caller (may be per-item or global default).
     pub fn create_session(
         &self,
         wallet: String,
         content_id: String,
         item_id: &str,
-        cfg: &Config,
+        chunk_price_atomic: u64,
+        seller_address: &str,
     ) -> String {
         let session_id = Uuid::new_v4().to_string();
         let resource_url = format!("/content/{}", item_id);
 
         let (chunk_requirements, _) =
-            build_chunk_requirements(cfg.chunk_price_atomic, &cfg.seller_address, &resource_url)
+            build_chunk_requirements(chunk_price_atomic, seller_address, &resource_url)
                 .expect("build_chunk_requirements failed — seller address validated at startup");
 
         self.sessions.insert(session_id.clone(), StreamingSession {

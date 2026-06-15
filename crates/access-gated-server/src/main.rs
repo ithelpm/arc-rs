@@ -85,21 +85,24 @@ async fn create_session(
     let content_id = item_id_to_content_id(&req.item_id);
     let content_hex = format!("0x{}", hex::encode(content_id.as_slice()));
 
+    let chunk_price = s.cfg.catalog.chunk_price(&req.item_id, s.cfg.chunk_price_atomic);
+
     let session_id = s.streaming.create_session(
         req.wallet.clone(),
         content_hex.clone(),
         &req.item_id,
-        &s.cfg,
+        chunk_price,
+        &s.cfg.seller_address,
     );
 
     let _ = s.access.log_streaming_session(
         &session_id, &req.wallet, &content_hex,
-        s.cfg.chunk_price_atomic, 1,
+        chunk_price, 1,
     ).await;
 
     Json(CreateSessionResponse {
         session_id,
-        chunk_price_atomic: s.cfg.chunk_price_atomic,
+        chunk_price_atomic: chunk_price,
         pay_to: s.cfg.seller_address.clone(),
     })
 }
@@ -151,14 +154,16 @@ async fn chunk_handler(
             tracing::info!(session = %session_id, chunk = chunk_num, "chunk payment settled");
             let pay_resp = build_payment_response_header(&settled).unwrap_or_default();
 
+            let title = s.cfg.catalog.title(&item_id);
+            let desc = s.cfg.catalog.description(&item_id);
             let body = Json(ChunkContent {
                 item_id: item_id.clone(),
                 session_id: session_id.clone(),
                 chunk: chunk_num,
                 content: format!(
-                    "Chunk {} of '{}'. Metered content delivered via per-chunk x402 billing. \
-                     Payment settled through Circle Gateway on Arc testnet.",
-                    chunk_num, item_id
+                    "[{title}] Chunk {chunk_num}. {desc} \
+                     Metered delivery via per-chunk x402 billing, \
+                     settled through Circle Gateway on Arc testnet.",
                 ),
             });
 
@@ -213,21 +218,24 @@ async fn buy_handler(
     if let Some(ref w) = wallet {
         if let Ok(true) = s.access.check_access(w, content_id).await {
             tracing::info!(wallet = %w, item = %item_id, "fast-path: access confirmed, no payment");
+            let title = s.cfg.catalog.title(&item_id);
+            let desc = s.cfg.catalog.description(&item_id);
             return Json(BuyContent {
                 item_id: item_id.clone(),
                 access: "permanent",
                 content: format!(
-                    "Full premium content for '{}'. \
+                    "[{title}] {desc} \
                      Access verified via fast-path (SQLite cache / on-chain hasAccess). \
                      No payment taken.",
-                    item_id
                 ),
             }).into_response();
         }
     }
 
+    let buy_price = s.cfg.catalog.buy_price(&item_id, s.cfg.buy_price_atomic);
+
     let (buy_requirements, resource) =
-        match build_buy_requirements(s.cfg.buy_price_atomic, &s.cfg.seller_address, &resource_url) {
+        match build_buy_requirements(buy_price, &s.cfg.seller_address, &resource_url) {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!("build_buy_requirements failed: {e}");
@@ -260,14 +268,15 @@ async fn buy_handler(
             });
 
             let pay_resp = build_payment_response_header(&settled).unwrap_or_default();
+            let title = s.cfg.catalog.title(&item_id);
+            let desc = s.cfg.catalog.description(&item_id);
             let body = Json(BuyContent {
                 item_id: item_id.clone(),
                 access: "permanent",
                 content: format!(
-                    "Full premium content for '{}'. \
+                    "[{title}] {desc} \
                      Payment settled. Permanent soulbound access is being recorded \
                      on Arc testnet (grantAccess submitted in background).",
-                    item_id
                 ),
             });
 
