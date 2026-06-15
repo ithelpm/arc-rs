@@ -1,6 +1,5 @@
 mod access;
 mod config;
-mod proxy;
 mod streaming;
 
 use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
@@ -28,9 +27,7 @@ use access::AccessManager;
 use config::Config;
 use streaming::StreamingManager;
 
-// ---------------------------------------------------------------------------
-// App state
-// ---------------------------------------------------------------------------
+// ─── App state ────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
 struct AppState {
@@ -38,12 +35,9 @@ struct AppState {
     access: Arc<AccessManager>,
     streaming: Arc<StreamingManager>,
     gateway: Arc<GatewayApiClient>,
-    http: reqwest::Client,
 }
 
-// ---------------------------------------------------------------------------
-// Request / response types
-// ---------------------------------------------------------------------------
+// ─── Request / response types ─────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct CreateSessionRequest {
@@ -55,24 +49,35 @@ struct CreateSessionRequest {
 struct CreateSessionResponse {
     session_id: String,
     chunk_price_atomic: u64,
-    chunk_secs: u64,
-    rate_per_sec_atomic: u64,
-    /// Seller address — returned so the buyer CLI can reconstruct chunk PaymentRequirements.
     pay_to: String,
 }
 
 #[derive(Deserialize)]
-struct StreamQuery {
+struct ContentQuery {
     session_id: Option<String>,
     wallet: Option<String>,
 }
 
-// ---------------------------------------------------------------------------
-// Handlers
-// ---------------------------------------------------------------------------
+/// Demo content returned after a successful one-time purchase.
+#[derive(Serialize)]
+struct BuyContent {
+    item_id: String,
+    access: &'static str,
+    content: String,
+}
 
-/// POST /api/stream/session
-/// Creates a per-second billing session for a given Jellyfin item.
+/// Demo content returned per paid chunk in a metered session.
+#[derive(Serialize)]
+struct ChunkContent {
+    item_id: String,
+    session_id: String,
+    chunk: u64,
+    content: String,
+}
+
+// ─── Handlers ─────────────────────────────────────────────────────────────────
+
+/// POST /api/session — create a per-chunk billing session.
 async fn create_session(
     State(s): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
@@ -87,49 +92,39 @@ async fn create_session(
         &s.cfg,
     );
 
-    let _ = s
-        .access
-        .log_streaming_session(
-            &session_id,
-            &req.wallet,
-            &content_hex,
-            s.cfg.stream_rate_per_sec_atomic,
-            s.cfg.stream_chunk_secs,
-        )
-        .await;
+    let _ = s.access.log_streaming_session(
+        &session_id, &req.wallet, &content_hex,
+        s.cfg.chunk_price_atomic, 1,
+    ).await;
 
     Json(CreateSessionResponse {
         session_id,
-        chunk_price_atomic: s.cfg.chunk_price_atomic(),
-        chunk_secs: s.cfg.stream_chunk_secs,
-        rate_per_sec_atomic: s.cfg.stream_rate_per_sec_atomic,
+        chunk_price_atomic: s.cfg.chunk_price_atomic,
         pay_to: s.cfg.seller_address.clone(),
     })
 }
 
-/// GET /Videos/{item_id}/stream?[session_id=...][&wallet=...]
+/// GET /content/{item_id}[?session_id=...][&wallet=...]
 ///
 /// Two modes:
-///   - `session_id` present → per-second streaming billing (chunk payment required)
-///   - `session_id` absent  → buy-to-access (one payment grants permanent on-chain access)
-async fn video_stream(
+///   - `session_id` present → per-chunk metered access (pay per request)
+///   - `session_id` absent  → buy-to-access (one payment → permanent soulbound record)
+async fn get_content(
     State(s): State<AppState>,
     Path(item_id): Path<String>,
-    Query(q): Query<StreamQuery>,
-    req: Request<Body>,
+    Query(q): Query<ContentQuery>,
+    headers: HeaderMap,
+    _req: Request<Body>,
 ) -> Response {
-    let headers = req.headers().clone();
-
     if let Some(session_id) = q.session_id {
-        stream_chunk_handler(s, item_id, session_id, headers).await
+        chunk_handler(s, item_id, session_id, headers).await
     } else {
-        buy_access_handler(s, item_id, q.wallet, headers, req).await
+        buy_handler(s, item_id, q.wallet, headers).await
     }
 }
 
-/// Per-second billing: the client provides a signed chunk auth in `payment-signature`.
-/// After settlement the video streams for `chunk_secs` then closes.
-async fn stream_chunk_handler(
+/// Per-chunk metered access: each call requires a fresh payment-signature.
+async fn chunk_handler(
     s: AppState,
     item_id: String,
     session_id: String,
@@ -139,40 +134,38 @@ async fn stream_chunk_handler(
         Some(g) => g,
         None => return (StatusCode::NOT_FOUND, "session not found").into_response(),
     };
-
     let chunk_requirements = session_guard.chunk_requirements.clone();
-    let wallet = session_guard.wallet.clone();
+    let chunk_num = session_guard.next_chunk();
     drop(session_guard);
 
     let resource = arc_x402::types::ResourceInfo {
-        url: format!("/Videos/{}/stream", item_id),
-        description: "Stream chunk".to_string(),
-        mime_type: "video/*".to_string(),
+        url: format!("/content/{}", item_id),
+        description: "Metered content chunk".to_string(),
+        mime_type: "application/json".to_string(),
     };
 
-    let sig_header = headers
-        .get("payment-signature")
-        .and_then(|v| v.to_str().ok());
+    let sig_header = headers.get("payment-signature").and_then(|v| v.to_str().ok());
 
     match handle_payment(sig_header, &chunk_requirements, &resource, &s.gateway).await {
         Ok(settled) => {
-            tracing::info!(session = %session_id, payer = %wallet, "chunk settled");
-
+            tracing::info!(session = %session_id, chunk = chunk_num, "chunk payment settled");
             let pay_resp = build_payment_response_header(&settled).unwrap_or_default();
 
-            let mut response = proxy::proxy_stream_chunk(
-                &s.http,
-                &s.cfg.jellyfin_url,
-                &item_id,
-                &headers,
-                s.cfg.stream_chunk_secs,
-            )
-            .await;
+            let body = Json(ChunkContent {
+                item_id: item_id.clone(),
+                session_id: session_id.clone(),
+                chunk: chunk_num,
+                content: format!(
+                    "Chunk {} of '{}'. Metered content delivered via per-chunk x402 billing. \
+                     Payment settled through Circle Gateway on Arc testnet.",
+                    chunk_num, item_id
+                ),
+            });
 
+            let mut response = body.into_response();
             if let Ok(hv) = pay_resp.parse() {
                 response.headers_mut().insert("payment-response", hv);
             }
-
             response
         }
         Err(arc_x402::X402Error::PaymentRequired(_)) => {
@@ -194,44 +187,47 @@ async fn stream_chunk_handler(
     }
 }
 
-/// Buy-to-access: one x402 payment → on-chain `grantAccess` → stream full video.
-/// On subsequent requests with the same wallet, the fast-path cache check bypasses payment.
-async fn buy_access_handler(
+/// Buy-to-access: one payment grants permanent access; subsequent requests use fast-path.
+async fn buy_handler(
     s: AppState,
     item_id: String,
     wallet_param: Option<String>,
     headers: HeaderMap,
-    req: Request<Body>,
 ) -> Response {
-    // Prefer X-Wallet-Address header, fall back to query param
     let wallet = headers
         .get("x-wallet-address")
         .and_then(|v| v.to_str().ok())
         .map(String::from)
         .or(wallet_param);
 
-    // Validate wallet address format early if provided
     if let Some(ref w) = wallet {
         if Address::from_str(w).is_err() {
-            tracing::warn!("invalid wallet address in request: {w}");
             return (StatusCode::BAD_REQUEST, "invalid wallet address format").into_response();
         }
     }
 
     let content_id = item_id_to_content_id(&item_id);
-    let resource_url = format!("/Videos/{}/stream", item_id);
+    let resource_url = format!("/content/{}", item_id);
 
-    // Fast path: wallet already has on-chain (or cached) access
+    // Fast path: SQLite cache hit or on-chain hasAccess == true
     if let Some(ref w) = wallet {
         if let Ok(true) = s.access.check_access(w, content_id).await {
-            tracing::debug!(wallet = %w, item = %item_id, "access cache hit — bypassing payment");
-            return proxy::proxy_to_jellyfin(&s.http, &s.cfg.jellyfin_url, req).await;
+            tracing::info!(wallet = %w, item = %item_id, "fast-path: access confirmed, no payment");
+            return Json(BuyContent {
+                item_id: item_id.clone(),
+                access: "permanent",
+                content: format!(
+                    "Full premium content for '{}'. \
+                     Access verified via fast-path (SQLite cache / on-chain hasAccess). \
+                     No payment taken.",
+                    item_id
+                ),
+            }).into_response();
         }
     }
 
     let (buy_requirements, resource) =
-        match build_buy_requirements(s.cfg.buy_price_atomic, &s.cfg.seller_address, &resource_url)
-        {
+        match build_buy_requirements(s.cfg.buy_price_atomic, &s.cfg.seller_address, &resource_url) {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!("build_buy_requirements failed: {e}");
@@ -239,52 +235,43 @@ async fn buy_access_handler(
             }
         };
 
-    let sig_header = headers
-        .get("payment-signature")
-        .and_then(|v| v.to_str().ok());
+    let sig_header = headers.get("payment-signature").and_then(|v| v.to_str().ok());
 
     match handle_payment(sig_header, &buy_requirements, &resource, &s.gateway).await {
         Ok(settled) => {
-            // Resolve payer identity; if unknown after settlement, stream without grant
-            let payer = match settled
-                .payer
-                .clone()
-                .or_else(|| wallet.clone())
-                .filter(|p| !p.is_empty())
-            {
+            let payer = match settled.payer.clone().or_else(|| wallet.clone()).filter(|p| !p.is_empty()) {
                 Some(p) => p,
                 None => {
-                    tracing::error!(
-                        item = %item_id,
-                        "payer identity unknown after settlement — streaming without on-chain grant"
-                    );
-                    let pay_resp = build_payment_response_header(&settled).unwrap_or_default();
-                    let mut response =
-                        proxy::proxy_to_jellyfin(&s.http, &s.cfg.jellyfin_url, req).await;
-                    if let Ok(hv) = pay_resp.parse() {
-                        response.headers_mut().insert("payment-response", hv);
-                    }
-                    return response;
+                    tracing::error!(item = %item_id, "payer unknown after settlement");
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
                 }
             };
 
             tracing::info!(payer = %payer, item = %item_id, "buy payment settled");
 
-            // Fire-and-forget: grant on-chain access without blocking the HTTP response
+            // Fire-and-forget: record soulbound access on-chain without blocking response
             let access_clone = Arc::clone(&s.access);
             let payer_clone = payer.clone();
             tokio::spawn(async move {
                 match access_clone.grant_and_record(&payer_clone, content_id).await {
-                    Ok(tx) => {
-                        tracing::info!(payer = %payer_clone, tx = %tx, "grantAccess confirmed")
-                    }
+                    Ok(tx) => tracing::info!(payer = %payer_clone, tx = %tx, "grantAccess confirmed"),
                     Err(e) => tracing::error!("grantAccess background task failed: {e}"),
                 }
             });
 
             let pay_resp = build_payment_response_header(&settled).unwrap_or_default();
-            let mut response =
-                proxy::proxy_to_jellyfin(&s.http, &s.cfg.jellyfin_url, req).await;
+            let body = Json(BuyContent {
+                item_id: item_id.clone(),
+                access: "permanent",
+                content: format!(
+                    "Full premium content for '{}'. \
+                     Payment settled. Permanent soulbound access is being recorded \
+                     on Arc testnet (grantAccess submitted in background).",
+                    item_id
+                ),
+            });
+
+            let mut response = body.into_response();
             if let Ok(hv) = pay_resp.parse() {
                 response.headers_mut().insert("payment-response", hv);
             }
@@ -309,23 +296,15 @@ async fn buy_access_handler(
     }
 }
 
-/// Catch-all: passes every other request through to Jellyfin unchanged.
-async fn catch_all(State(s): State<AppState>, req: Request<Body>) -> Response {
-    proxy::proxy_to_jellyfin(&s.http, &s.cfg.jellyfin_url, req).await
-}
-
-// ---------------------------------------------------------------------------
-// Bootstrap
-// ---------------------------------------------------------------------------
+// ─── Bootstrap ────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("jellyfin_proxy=info".parse().unwrap()),
+                .add_directive("access_gated_server=info".parse().unwrap()),
         )
         .init();
 
@@ -338,43 +317,39 @@ async fn main() -> anyhow::Result<()> {
         .with_signer(&cfg.seller_private_key);
 
     let access = Arc::new(AccessManager::new(&cfg.database_url, chain_client).await?);
-    let gateway = Arc::new(GatewayApiClient::testnet());
-    let http = reqwest::Client::builder()
-        .user_agent("jellyfin-proxy/0.1.0")
-        .build()?;
-
     let streaming = Arc::new(StreamingManager::new());
+    let gateway = Arc::new(GatewayApiClient::testnet());
 
     let state = AppState {
         cfg: cfg.clone(),
         access,
         streaming: Arc::clone(&streaming),
         gateway,
-        http,
     };
 
-    // Background task: clean up streaming sessions older than 24 hours
+    // Background GC: evict sessions older than 24 hours
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(3600));
         loop {
             interval.tick().await;
             streaming.cleanup_expired(86400);
-            tracing::debug!("streaming session GC complete");
+            tracing::debug!("session GC complete");
         }
     });
 
     let app = Router::new()
-        .route("/api/stream/session", post(create_session))
-        .route("/Videos/{item_id}/stream", get(video_stream))
-        .fallback(catch_all)
+        .route("/api/session", post(create_session))
+        .route("/content/{item_id}", get(get_content))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], cfg.port));
-    tracing::info!("jellyfin-proxy listening on {addr}");
-    tracing::info!("upstream Jellyfin: {}", cfg.jellyfin_url);
+    tracing::info!("access-gated-server listening on {addr}");
+    tracing::info!(
+        buy_price = cfg.buy_price_atomic,
+        chunk_price = cfg.chunk_price_atomic,
+        "payment config"
+    );
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
-
+    axum::serve(tokio::net::TcpListener::bind(addr).await?, app).await?;
     Ok(())
 }

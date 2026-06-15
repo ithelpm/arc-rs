@@ -1,11 +1,11 @@
 [package]
-name = "jellyfin-proxy"
+name = "access-gated-server"
 version = "0.1.0"
 edition = "2021"
-description = "x402-gated Jellyfin reverse proxy with per-second streaming billing"
+description = "Generic x402-gated content server — reference implementation of the arc-x402 library"
 
 [[bin]]
-name = "jellyfin-proxy"
+name = "access-gated-server"
 path = "src/main.rs"
 
 [dependencies]
@@ -19,15 +19,6 @@ alloy-primitives = "1.6.0"
 # HTTP server
 axum = "0.8.9"
 tokio = { version = "1", features = ["full"] }
-tower = "0.5"
-tower-http = { version = "0.6", features = ["trace"] }
-
-# HTTP client (for proxying to Jellyfin and calling Gateway API)
-reqwest = { version = "0.13.4", default-features = false, features = [
-    "json",
-    "rustls",
-    "stream",
-] }
 
 # Database (SQLite access cache)
 sqlx = { version = "0.9.0", features = ["sqlite", "runtime-tokio", "tls-none"] }
@@ -35,11 +26,6 @@ sqlx = { version = "0.9.0", features = ["sqlite", "runtime-tokio", "tls-none"] }
 # Concurrent session map
 dashmap = "6"
 uuid = { version = "1", features = ["v4"] }
-
-# Streaming utilities
-tokio-stream = "0.1"
-futures = "0.3"
-bytes = "1"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

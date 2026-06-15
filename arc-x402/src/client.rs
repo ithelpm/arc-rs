@@ -271,7 +271,7 @@ impl BuyerClient {
             item_id: &'a str,
         }
 
-        let url = format!("{}/api/stream/session", base_url.trim_end_matches('/'));
+        let url = format!("{}/api/session", base_url.trim_end_matches('/'));
         let resp = self
             .http
             .post(&url)
@@ -303,7 +303,7 @@ impl BuyerClient {
         item_id: &str,
     ) -> Result<PayResult, X402Error> {
         let url = format!(
-            "{}/Videos/{}/stream?wallet={}",
+            "{}/content/{}?wallet={}",
             base_url.trim_end_matches('/'),
             item_id,
             self.address
@@ -325,7 +325,7 @@ impl BuyerClient {
     ) -> Result<Vec<u8>, X402Error> {
         let signature = self.sign_chunk(requirements, resource)?;
         let url = format!(
-            "{}/Videos/{}/stream?session_id={}",
+            "{}/content/{}?session_id={}",
             base_url.trim_end_matches('/'),
             item_id,
             session_id
