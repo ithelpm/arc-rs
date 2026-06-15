@@ -1,0 +1,38 @@
+[package]
+name = "arc-x402"
+version = "0.1.0"
+edition = "2021"
+description = "x402 HTTP nanopayments library for Circle Arc network"
+license = "MIT"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+alloy-primitives = "1.6.0"
+tiny-keccak = { version = "2", features = ["keccak"] }
+k256 = { version = "0.13", features = ["ecdsa"] }
+rand = "0.10.1"
+hex = "0.4"
+lazy_static = "1"
+thiserror = "2.0.18"
+anyhow = "1"
+
+# Axum middleware (default on)
+axum = { version = "0.8.9", optional = true }
+tower = { version = "0.5.3", optional = true }
+http = { version = "1", optional = true }
+
+# Database (default off, SeaORM)
+sea-orm = { version = "1", features = [
+    "sqlx-postgres",
+    "runtime-tokio-rustls",
+], optional = true }
+
+[features]
+default = ["axum-middleware"]
+axum-middleware = ["dep:axum", "dep:tower", "dep:http"]
+db = ["dep:sea-orm"]
+supabase = ["db"]
