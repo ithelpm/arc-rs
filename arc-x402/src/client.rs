@@ -18,7 +18,9 @@ use crate::{
 pub struct CreateSessionResponse {
     pub session_id: String,
     pub chunk_price_atomic: u64,
+    #[serde(default)]
     pub chunk_secs: u64,
+    #[serde(default)]
     pub rate_per_sec_atomic: u64,
     /// Seller address — needed to reconstruct `PaymentRequirements` for chunk signing.
     pub pay_to: String,

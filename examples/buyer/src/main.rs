@@ -153,7 +153,7 @@ async fn cmd_stream(client: &BuyerClient, base_url: &str, item_id: &str, chunks:
         session.session_id, session.chunk_secs, rate_usdc
     );
 
-    let resource_url = format!("/Videos/{}/stream", item_id);
+    let resource_url = format!("/content/{}", item_id);
     let (requirements, resource) = build_chunk_requirements(
         session.chunk_price_atomic,
         &session.pay_to,
