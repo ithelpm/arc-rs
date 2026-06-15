@@ -85,6 +85,7 @@ This pattern can be applied to any protected resource: video streams, API calls,
 - **Rust** toolchain (stable) — `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 - **Foundry** — `curl -L https://foundry.paradigm.xyz | bash && foundryup`
 - **arc-canteen CLI** — `npm i -g @the-canteen-dev/arc-canteen`
+- **Circle CLI** (optional, recommended) — `npm i -g @circle-fin/cli` — lets you pay with a managed Agent Wallet instead of a raw private key
 
 ## Quick Start
 
@@ -95,14 +96,32 @@ This pattern can be applied to any protected resource: video streams, API calls,
 cargo run --example generate-keys
 # → copy SELLER_ADDRESS and SELLER_PRIVATE_KEY into .env
 
-# Buyer keypair (pays for resources)
+# Buyer keypair — two options:
+
+# Option A: self-custodial EOA (raw private key, used by examples/buyer)
 cargo run --example generate-keys
 # → copy BUYER_ADDRESS and BUYER_PRIVATE_KEY into .env
+
+# Option B: Circle Agent Wallet (auto-funded, compliance-aware, used with Circle CLI)
+circle wallet login you@email.com --testnet
+circle wallet list --chain ARC-TESTNET --type agent
+# → copy the returned address into .env as BUYER_ADDRESS
 ```
 
 ### 2 — Fund wallets with testnet USDC
 
-Visit <https://faucet.circle.com>, select **Arc Testnet**, and request USDC for both addresses. The faucet deposits to the Circle Gateway balance — this is the balance the x402 protocol draws from.
+```bash
+# Seller wallet — fund via Circle faucet (Gateway balance)
+# Visit https://faucet.circle.com, select Arc Testnet, enter SELLER_ADDRESS
+
+# Buyer wallet (Option A — EOA)
+# Same: visit https://faucet.circle.com, enter BUYER_ADDRESS
+
+# Buyer wallet (Option B — Circle Agent Wallet)
+# Auto-funded with 20 USDC when you ran circle wallet login above.
+# Confirm the Gateway balance:
+circle gateway balance --address 0xYourAgentWallet --chain ARC-TESTNET
+```
 
 ### 3 — Obtain an Arc testnet RPC URL
 
@@ -135,8 +154,12 @@ source .env
 cargo run --example seller
 # Listening on http://localhost:3000
 
-# In another terminal:
+# Pay with Rust buyer CLI:
 cargo run --example buyer -- pay --base-url http://localhost:3000 --limit 0.05
+
+# Pay with Circle CLI (Agent Wallet):
+circle services pay http://localhost:3000/hello \
+  --address 0xYourAgentWallet --chain ARC-TESTNET
 ```
 
 ### 6 — Run access-gated-server and test the full closed-loop
@@ -145,17 +168,42 @@ cargo run --example buyer -- pay --base-url http://localhost:3000 --limit 0.05
 source .env
 cargo run --bin access-gated-server
 # access-gated-server listening on 0.0.0.0:3001
+```
 
-# In another terminal:
+**Option A — Rust buyer CLI:**
 
+```bash
 # Buy permanent access to a content item ($5.00 one-time)
 cargo run --example buyer -- buy --item-id demo-episode-1 --base-url http://localhost:3001
 
-# Stream 3 metered chunks ($0.001/chunk at default settings)
+# Stream 3 metered chunks ($0.001/chunk)
 cargo run --example buyer -- stream --item-id demo-episode-1 --chunks 3 --base-url http://localhost:3001
 
-# Make a second buy request — the fast-path fires immediately, no payment charged
+# Second buy request — fast-path fires immediately, no payment charged
 cargo run --example buyer -- buy --item-id demo-episode-1 --base-url http://localhost:3001
+```
+
+**Option B — Circle CLI (Agent Wallet):**
+
+```bash
+# Inspect the 402 payment requirements before paying
+circle services inspect http://localhost:3001/content/demo-episode-1
+
+# Buy-to-access: pay once, receive permanent soulbound access
+circle services pay http://localhost:3001/content/demo-episode-1 \
+  --address 0xYourAgentWallet \
+  --chain ARC-TESTNET
+
+# Metered streaming: create a session first, then pay per chunk
+SESSION=$(curl -s -X POST http://localhost:3001/api/session \
+  -H "Content-Type: application/json" \
+  -d '{"wallet":"0xYourAgentWallet","item_id":"demo-episode-1"}' \
+  | jq -r '.session_id')
+
+circle services pay \
+  "http://localhost:3001/content/demo-episode-1?session_id=$SESSION" \
+  --address 0xYourAgentWallet \
+  --chain ARC-TESTNET
 ```
 
 The closed-loop demo shows:
@@ -176,6 +224,66 @@ A single x402 payment of `BUY_PRICE_ATOMIC` grants permanent access. The server 
 ### Fast-path cache (returning buyers)
 
 On every buy-mode request the server checks a local SQLite cache (1-hour TTL). On miss it falls back to `hasAccess(wallet, contentId)` via `eth_call`. If either returns `true`, content is delivered immediately with no payment.
+
+## Paying with Circle CLI
+
+`access-gated-server` speaks standard x402, so **any x402-compatible client works out of the box** — including Circle's official CLI (`@circle-fin/cli`). No code changes are needed on the server side.
+
+### Setup (one-time)
+
+```bash
+npm install -g @circle-fin/cli
+
+# Create an Agent Wallet on Arc testnet — auto-funded with 20 USDC from the Circle faucet
+circle wallet login you@email.com --testnet
+circle wallet list --chain ARC-TESTNET --type agent
+# → note your agent wallet address (0x...)
+
+# Confirm Gateway balance (the x402 protocol draws from this)
+circle gateway balance --address 0xYourAgentWallet --chain ARC-TESTNET
+```
+
+### Inspect a protected endpoint before paying
+
+```bash
+# Shows the 402 PaymentRequirements: price, network, pay-to address, timeout
+circle services inspect http://YOUR_SERVER/content/demo-episode-1
+```
+
+### Pay for buy-to-access content
+
+```bash
+circle services pay http://YOUR_SERVER/content/demo-episode-1 \
+  --address 0xYourAgentWallet \
+  --chain ARC-TESTNET \
+  --max-amount 6.00
+```
+
+`circle services pay` handles the full x402 flow automatically: initial probe → 402 → EIP-3009 sign → retry with `payment-signature` header → parse `payment-response`.
+
+### Pay for a metered streaming chunk
+
+```bash
+# 1. Open a billing session
+SESSION=$(curl -s -X POST http://YOUR_SERVER/api/session \
+  -H "Content-Type: application/json" \
+  -d '{"wallet":"0xYourAgentWallet","item_id":"demo-episode-1"}' \
+  | jq -r '.session_id')
+
+# 2. Pay for each chunk (repeat as many times as needed)
+circle services pay \
+  "http://YOUR_SERVER/content/demo-episode-1?session_id=$SESSION" \
+  --address 0xYourAgentWallet \
+  --chain ARC-TESTNET \
+  --max-amount 0.01
+```
+
+### Check Gateway balance and transaction history
+
+```bash
+circle gateway balance --address 0xYourAgentWallet --chain ARC-TESTNET
+circle transaction list --address 0xYourAgentWallet --chain ARC-TESTNET
+```
 
 ## Environment Variables
 
