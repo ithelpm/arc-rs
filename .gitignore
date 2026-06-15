@@ -1,6 +1,13 @@
 refer/
 .env.local
 .env
-# Added by cargo
 
+# Cargo build artefacts
 /target
+
+# Forge build artefacts
+/out
+/cache
+
+# Claude Code internal state
+/.claude
