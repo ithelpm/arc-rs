@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /build
 
+# Increase rustc stack size to prevent SIGSEGV during ThinLTO (aws-lc-rs / reqwest)
+ENV RUST_MIN_STACK=16777216
+
 # Copy workspace manifests first for layer caching
 COPY Cargo.toml Cargo.lock ./
 COPY arc-x402/Cargo.toml arc-x402/
@@ -58,6 +61,7 @@ RUN useradd -ms /bin/sh appuser
 WORKDIR /app
 
 COPY --from=builder /build/target/release/access-gated-server /app/access-gated-server
+COPY items.json /app/items.json
 
 # SQLite data directory — mount a volume here in production
 RUN mkdir -p /app/data && chown -R appuser:appuser /app
